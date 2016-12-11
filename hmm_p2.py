@@ -6,12 +6,7 @@ __date__ ="$Dec 05, 2016"
 import sys
 from collections import defaultdict
 import math
-import random
 
-def combinations(list_a, list_b):
-    for a in list_a:
-        for b in list_b:
-            yield (a, b)
 
 def simple_conll_corpus_iterator(corpus_file):
     """
@@ -75,6 +70,12 @@ def get_ngrams(sent_iterator, n):
             yield n_gram        
 
 
+def combinations(list_a, list_b):
+    for a in list_a:
+        for b in list_b:
+            yield (a, b)
+
+
 class Hmm(object):
     """
     Stores counts for n-grams and emissions. 
@@ -123,7 +124,6 @@ class Hmm(object):
         for word, ne_tag in self.emission_counts:            
             output.write("%i WORDTAG %s %s\n" % (self.emission_counts[(word, ne_tag)], ne_tag, word))
 
-
         # Then write counts for all ngrams
         for n in printngrams:            
             for ngram in self.ngram_counts[n-1]:
@@ -170,7 +170,7 @@ class Hmm(object):
 
     def clean_data(self, trainFile, out):
         """
-        Infrequent words change their tag to _RARE_ when their count < 5.
+        Infrequent words change their text to _RARE_ when their count < 5.
         Create new file with cleaned words
         """
         for line in trainFile:
@@ -182,7 +182,6 @@ class Hmm(object):
 
                 if self.words_count[word] < 5:
                     line = "_RARE_ " + ne_tag + "\n"
-
             out.write(line)
 
 
@@ -205,83 +204,65 @@ class Hmm(object):
             cls = ngramstr.split()
             ngram2 = tuple(cls[:2])
             self.trigram_probs[(cls[-1], ngram2)] = self.ngram_counts[-1][ngram] / self.ngram_counts[-2][ngram2]
-            
-    
-    def get_emission_prob(self, word, tag):
-        prob = self.emission_probs[(word, tag)]
-        if prob == 0:
-            prob = self.emission_probs[('_RARE_', tag )]
-        return prob
-        
+
 
     def get_emission_rare(self, word, tag):
         return self.emission_probs[('_RARE_',tag)]
-
-
-    def K(self, k):
-        if k in (-2, -1): return ["*"]
-        return self.tags 
-
         
-    def viterbi_algorithm(self, sentence, labels, k):
-        k = min(len(sentence), k)
-        prob = 1.0
-        for i in range(0, k):
-            if i == 0:
-                prob *= self.trigram_probs[(labels[i], ('*','*'))] * self.get_emission_prob(sentence[i],labels[i])
-            elif i == 1:
-                prob *= self.trigram_probs[(labels[i], ('*',labels[i-1]))] * self.get_emission_prob(sentence[i],labels[i])
-            else:
-                prob *= self.trigram_probs[(labels[i], (labels[i-2],labels[i-1]))] * self.get_emission_prob(sentence[i],labels[i])
         
-        i = len(labels)
-        prob *= self.trigram_probs[('STOP', (labels[i-2],labels[i-1]))]
-        return prob
+    def S(self, k):
+        """
+        Define the set of available tags when we are at the k position in the sentence
+        """
+        if k in (-2,-1): 
+            return ['*']
+        return self.all_states
     
-
-    def basic_viterbi4(self, sentence, labels):
-        maxProb = 0
-        probs = {}
-        w = '*'
-        u = '*'
-        prev = 1
+    
+    def dinamic_viterbi(self, sentence, labels):
+        """
+        Viterbi algorithm that tag each word in the sentence computing the maximum probability at the k position
+        """
+        n = len(sentence)
+        pi = {}
+        bp = {}
+        pi[(-1,'*','*')] = 1.0
         
-        for k in range(0, len(sentence)):
-            for v in self.all_states:
-                probs[v] = prev * self.trigram_probs[(v,(w,u))] * self.emission_probs[(sentence[k],v)]
-            maxProb = max(probs.values())
-            if maxProb == 0:
-                for v in self.all_states:
-                    probs[v] = prev * self.trigram_probs[(v,(w,u))] * self.get_emission_rare(sentence[k],v)
-                maxProb = max(probs.values())
-            tag = None
-            for st, val in probs.items():
-                if val == maxProb:
-                    tag = st
-                    break
-            labels[k] = tag
-            w = u
-            u = tag
-            prev = maxProb
-            probs = {}
-                  
+        for k in range(0, n):
+            for u, v in combinations(self.S(k-1), self.S(k)):
+                pi[(k,u,v)], bp[(k,u,v)] = max([(pi[(k-1,w,u)] * self.trigram_probs[(v,(w,u))] * self.emission_probs[(sentence[k],v)], w) for w in self.S(k-2)])
+                if pi[(k,u,v)] == 0:
+                    pi[(k,u,v)], bp[(k,u,v)] = max([(pi[(k-1,w,u)] * self.trigram_probs[(v,(w,u))] * self.get_emission_rare(sentence[k],v), w) for w in self.S(k-2)])
+                #print (k,u,v), pi[(k,u,v)], bp[(k,u,v)]
+        #for u, v in combinations(self.S(n-2), self.S(n-1)):
+        #    print (u,v), self.trigram_probs[('STOP',(u,v))]
+            
+        _, u, v = max([(pi[(n-1,u1,v1)] * self.trigram_probs[('STOP',(u1,v1))], u1, v1) for u1,v1 in combinations(self.S(n-2), self.S(n-1))])
+        #print (u,v)
+
+        if n >= 1:
+            labels[n-1] = v
+        if n >= 2:
+            labels[n-2] = u
+            
+        for k in range(n-3, -1, -1):
+            labels[k] = bp[k+2, labels[k+1], labels[k+2]]
+
 
     def tag_words2(self, testFile, out):
         """
         We tag the words inside testFile and write the results in an output file.
         """
         list_sentences = sentence_iterator(simple_conll_corpus_iterator(testFile))
-        i = 0
         for sentence in list_sentences:
             words = [word for ne_tag, word in sentence]
             labels = ['' for w in words]
-            self.basic_viterbi4(sentence, labels)
-                        
+            self.dinamic_viterbi(words, labels)
             for j in xrange(len(labels)):
                 out.write(words[j] + " " + labels[j] + "\n")
             out.write("\n")
-            
-        
+
+
 def usage():
     print """
     python count_freqs.py [train_file] [counts_file] [test_file] [output_file]
@@ -290,7 +271,7 @@ def usage():
 
 if __name__ == "__main__":
 
-    if len(sys.argv) != 5: # Expect exactly one argument: the training data file
+    if len(sys.argv) != 5:
         usage()
         sys.exit(2)
 
