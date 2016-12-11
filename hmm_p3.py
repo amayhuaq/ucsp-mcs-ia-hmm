@@ -1,17 +1,10 @@
 #! /usr/bin/python
-
 __author__="Angela Mayhua <amayhuaq@gmail.com>"
 __date__ ="$Dec 05, 2016"
 
 import sys
 from collections import defaultdict
-import math
-import random
 
-def combinations(list_a, list_b):
-    for a in list_a:
-        for b in list_b:
-            yield (a, b)
 
 def simple_conll_corpus_iterator(corpus_file):
     """
@@ -35,6 +28,7 @@ def simple_conll_corpus_iterator(corpus_file):
         else: # Empty line
             yield (None, None)                        
         l = corpus_file.readline()
+
 
 def sentence_iterator(corpus_iterator):
     """
@@ -75,6 +69,12 @@ def get_ngrams(sent_iterator, n):
             yield n_gram        
 
 
+def combinations(list_a, list_b):
+    for a in list_a:
+        for b in list_b:
+            yield (a, b)
+
+
 class Hmm(object):
     """
     Stores counts for n-grams and emissions. 
@@ -113,6 +113,7 @@ class Hmm(object):
             if ngram[-2][0] is None: # this is the first n-gram in a sentence
                 self.ngram_counts[self.n - 2][tuple((self.n - 1) * ["*"])] += 1
 
+
     def write_counts(self, output, printngrams=[1,2,3]):
         """
         Writes counts to the output file object.
@@ -122,7 +123,6 @@ class Hmm(object):
         # First write counts for emissions
         for word, ne_tag in self.emission_counts:            
             output.write("%i WORDTAG %s %s\n" % (self.emission_counts[(word, ne_tag)], ne_tag, word))
-
 
         # Then write counts for all ngrams
         for n in printngrams:            
@@ -181,7 +181,7 @@ class Hmm(object):
                 ne_tag = parts[1]
 
                 if self.words_count[word] < 5:
-		    if any(char.isdigit() for char in word):
+                    if any(char.isdigit() for char in word):
                         line = "_Numeric_ " + ne_tag + "\n"
                     elif len([l for l in word if l.isupper()]) == len(word):
                         line = "_AllCapitals_ " + ne_tag + "\n" 
@@ -189,7 +189,6 @@ class Hmm(object):
                         line = "_LastCapital_ " + ne_tag + "\n"
                     else:
                         line = "_RARE_ " + ne_tag + "\n"
-
             out.write(line)
 
 
@@ -227,112 +226,69 @@ class Hmm(object):
         return self.emission_probs[(nword,tag)]
 
 
-    def get_emission_prob(self, word, tag):
-        prob = self.emission_probs[(word, tag)]
-        if prob == 0:
-            prob = self.get_emission_rare[(word, tag )]
-        return prob
+    def S(self, k):
+        """
+        Define the set of available tags when we are at the k position in the sentence
+        """
+        if k in (-2,-1): 
+            return ['*']
+        return self.all_states
 
 
-    def K(self, k):
-        if k in (-2, -1): return ["*"]
-        return self.tags 
-
+    def dinamic_viterbi(self, sentence, labels):
+        """
+        Viterbi algorithm that tag each word in the sentence computing the maximum probability at the k position
+        """
+        n = len(sentence)
+        pi = {}
+        bp = {}
+        pi[(-1,'*','*')] = 1.0
         
-    def viterbi_algorithm(self, sentence, labels, k):
-        k = min(len(sentence), k)
-        prob = 1.0
-        for i in range(0, k):
-            if i == 0:
-                prob *= self.trigram_probs[(labels[i], ('*','*'))] * self.get_emission_prob(sentence[i],labels[i])
-            elif i == 1:
-                prob *= self.trigram_probs[(labels[i], ('*',labels[i-1]))] * self.get_emission_prob(sentence[i],labels[i])
-            else:
-                prob *= self.trigram_probs[(labels[i], (labels[i-2],labels[i-1]))] * self.get_emission_prob(sentence[i],labels[i])
-        
-        i = len(labels)
-        prob *= self.trigram_probs[('STOP', (labels[i-2],labels[i-1]))]
-        return prob
-    
+        for k in range(0, n):
+            for u, v in combinations(self.S(k-1), self.S(k)):
+                pi[(k,u,v)], bp[(k,u,v)] = max([(pi[(k-1,w,u)] * self.trigram_probs[(v,(w,u))] * self.emission_probs[(sentence[k],v)], w) for w in self.S(k-2)])
+                if pi[(k,u,v)] == 0:
+                    pi[(k,u,v)], bp[(k,u,v)] = max([(pi[(k-1,w,u)] * self.trigram_probs[(v,(w,u))] * self.get_emission_rare(sentence[k],v), w) for w in self.S(k-2)])
+                #print (k,u,v), pi[(k,u,v)], bp[(k,u,v)]
+        #for u, v in combinations(self.S(n-2), self.S(n-1)):
+        #    print (u,v), self.trigram_probs[('STOP',(u,v))]
+            
+        _, u, v = max([(pi[(n-1,u1,v1)] * self.trigram_probs[('STOP',(u1,v1))], u1, v1) for u1,v1 in combinations(self.S(n-2), self.S(n-1))])
+        #print (u,v)
 
-    def basic_viterbi4(self, sentence, labels):
-        maxProb = 0
-        probs = {}
-        w = '*'
-        u = '*'
-        prev = 1
-        
-        for k in range(0, len(sentence)):
-            for v in self.all_states:
-                probs[v] = prev * self.trigram_probs[(v,(w,u))] * self.emission_probs[(sentence[k],v)]
-            maxProb = max(probs.values())
-            if maxProb == 0:
-                for v in self.all_states:
-                    probs[v] = prev * self.trigram_probs[(v,(w,u))] * self.get_emission_rare(sentence[k],v)
-                maxProb = max(probs.values())
-            tag = None
-            for st, val in probs.items():
-                if val == maxProb:
-                    tag = st
-                    break
-            labels[k] = tag
-            w = u
-            u = tag
-            prev = maxProb
-            probs = {}
-                  
+        if n >= 1:
+            labels[n-1] = v
+        if n >= 2:
+            labels[n-2] = u
+            
+        for k in range(n-3, -1, -1):
+            labels[k] = bp[k+2, labels[k+1], labels[k+2]]
+
 
     def tag_words2(self, testFile, out):
         """
         We tag the words inside testFile and write the results in an output file.
         """
         list_sentences = sentence_iterator(simple_conll_corpus_iterator(testFile))
-        i = 0
         for sentence in list_sentences:
             words = [word for ne_tag, word in sentence]
             labels = ['' for w in words]
-            self.basic_viterbi4(sentence, labels)
-                        
+            self.dinamic_viterbi(words, labels)
             for j in xrange(len(labels)):
                 out.write(words[j] + " " + labels[j] + "\n")
             out.write("\n")
-            
 
-    def tag_words1(self, testFile, out):
-        """
-        We tag the words inside testFile and write the results in an output file.
-        """
-        for word in testFile:
-            word = word.strip()
-            valTag = 0
-            tag = ""
-            if len(word) > 0:
-                for ne_tag in self.all_states:
-                    if self.emission_probs[(word, ne_tag)] > valTag:
-                        valTag = self.emission_probs[(word, ne_tag)]
-                        tag = ne_tag
-                if tag == "":
-                    for ne_tag in self.all_states:
-                        if self.get_emission_rare(word,ne_tag) > valTag:
-                            valTag = self.get_emission_rare(word,ne_tag)
-                            tag = ne_tag
-                    
-                word = word + " " + tag
-            out.write(word + "\n")
 
-        
 def usage():
     print """
-    python count_freqs.py [train_file] [counts_file] [test_file] [output_file]
+    python hmm_p3.py [train_file] [counts_file] [test_file] [output_file]
         Read in a gene tagged training input file and produce counts.
     """
 
 if __name__ == "__main__":
-
     if len(sys.argv) != 5: # Expect exactly one argument: the training data file
         usage()
         sys.exit(2)
-
     try:
         trainFile = file(sys.argv[1],"r")
         countsFile = file(sys.argv[2],"w")
@@ -370,4 +326,4 @@ if __name__ == "__main__":
     counter.compute_emission_prob()
     counter.compute_trigram_prob()
     # Tag of words
-    counter.tag_words1(testFile,outFile)
+    counter.tag_words2(testFile,outFile)
