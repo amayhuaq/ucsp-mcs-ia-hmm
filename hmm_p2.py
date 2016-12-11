@@ -1,11 +1,9 @@
 #! /usr/bin/python
-
 __author__="Angela Mayhua <amayhuaq@gmail.com>"
 __date__ ="$Dec 05, 2016"
 
 import sys
 from collections import defaultdict
-import math
 
 
 def simple_conll_corpus_iterator(corpus_file):
@@ -30,6 +28,7 @@ def simple_conll_corpus_iterator(corpus_file):
         else: # Empty line
             yield (None, None)                        
         l = corpus_file.readline()
+
 
 def sentence_iterator(corpus_iterator):
     """
@@ -113,6 +112,7 @@ class Hmm(object):
             # Need to count a single n-1-gram of sentence start symbols per sentence
             if ngram[-2][0] is None: # this is the first n-gram in a sentence
                 self.ngram_counts[self.n - 2][tuple((self.n - 1) * ["*"])] += 1
+
 
     def write_counts(self, output, printngrams=[1,2,3]):
         """
@@ -265,16 +265,14 @@ class Hmm(object):
 
 def usage():
     print """
-    python count_freqs.py [train_file] [counts_file] [test_file] [output_file]
+    python hmm_p2.py [train_file] [counts_file] [test_file] [output_file]
         Read in a gene tagged training input file and produce counts.
     """
 
 if __name__ == "__main__":
-
     if len(sys.argv) != 5:
         usage()
         sys.exit(2)
-
     try:
         trainFile = file(sys.argv[1],"r")
         countsFile = file(sys.argv[2],"w")
